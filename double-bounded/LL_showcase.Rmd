@@ -1,0 +1,313 @@
+---
+title: "Double-Bounded Likelihoods and Links"
+author: "Maximilian Scholz"
+date: "09/22/2023"
+output:
+  bookdown::html_document2: default
+---
+
+# Setup
+```{r, setup, message=FALSE}
+library(brms)
+library(bayesim)
+library(bayesfam)
+library(dplyr)
+library(purrr)
+library(patchwork)
+library(ggplot2)
+library(ggthemes)
+library(scico)
+set.seed(1235813)
+lbound = 0.0000000001
+ubound = 0.9999999999
+cart = 5
+
+# Change this to the directory you want the figures to be saved to
+figure_path = "~/Documents/dr/ms_calibration/double-bounded/figures/"
+
+plot_dist <- function(dist, bounds, pars, prefix = "d", parnames = NULL,
+                      package = NULL, user_theme = ggthemes::theme_tufte, ...) {
+  `%>%` <- dplyr::`%>%`
+  pos <- -1
+  if (!is.null(package)) {
+    pos <- asNamespace(package)
+  }
+  ddist <- get(paste0(prefix, dist), pos = pos, mode = "function")
+  df <- data.frame(x = seq(bounds[1], bounds[2], 0.001))
+  if (!is.null(parnames)) {
+    parnames <- paste0(parnames, " = ")
+  }
+  cnames <- rep(NA, length(pars))
+  for (i in seq_along(pars)) {
+    tmp <- do.call(ddist, c(list(df$x), pars[[i]], list(...)))
+    cnames[i] <- paste0("$", parnames, pars[[i]], "$", collapse = ", ")
+    df[paste0(parnames, pars[[i]], collapse = ", ")] <- tmp
+  }
+  df <- df %>%
+    tidyr::gather("pars", "dens", -x) %>%
+    dplyr::mutate(pars = factor(pars, unique(pars)))
+  gg <- ggplot2::ggplot(df, ggplot2::aes(x, dens, color = pars)) +
+    user_theme() +
+    ggplot2::geom_line(size = 1) +
+    scico::scale_colour_scico_d(palette = "batlow",end = 0.8, labels = unname(latex2exp::TeX(cnames))) +
+    ggplot2::labs(x = "x", y = "", color = "") +
+    ggplot2::theme(
+      axis.text.y = ggplot2::element_blank(),
+      axis.ticks.y = ggplot2::element_blank(),
+      axis.line.y = ggplot2::element_blank(),
+      legend.position = "bottom",
+      legend.text = ggplot2::element_text(size = 10)
+    )
+  if (prefix == "p") {
+    gg <- gg +
+      ggplot2::scale_y_continuous(breaks = c(0, 0.5, 1)) +
+      ggplot2::theme(
+        axis.ticks.y = ggplot2::element_line(),
+        axis.text.y = ggplot2::element_text(),
+        axis.line.y = ggplot2::element_line()
+      )
+  } else if (prefix == "q") {
+    gg <- gg +
+      ggplot2::scale_y_continuous() +
+      ggplot2::theme(
+        axis.ticks.y = ggplot2::element_line(),
+        axis.text.y = ggplot2::element_text(),
+        axis.line.y = ggplot2::element_line()
+      )
+  }
+  return(gg)
+}
+```
+
+# Distribution Shapes
+
+## Beta Distribution
+
+```{r, beta-setup}
+p1 <- plot_dist(
+  dist = "beta_mean",
+  bounds = c(lbound, ubound),
+  parnames = c("mu", "phi"),
+  package = "bayesfam",
+  pars = list(
+    c(0.5, 10),
+    c(0.25, 10),
+    c(0.5, 1.5)
+    ),
+  user_theme = partial(theme_tufte, base_family = "")
+  ) +
+  ggtitle("Beta") +
+  guides(color = "none") +
+  coord_cartesian(ylim = c(0, cart)) +
+  geom_vline(xintercept = 0, linetype = "dotted", color = "grey") +
+  geom_vline(xintercept = 1, linetype = "dotted", color = "grey") +
+  theme(axis.title.x = element_blank())
+p1 
+```
+
+## Kumaraswamy
+
+```{r, kumaraswamy-setup, cache=TRUE}
+p2 <- plot_dist(
+  dist = "kumaraswamy",
+  bounds = c(lbound, ubound),
+  parnames = c("mu", "p"),
+  package = "bayesfam",
+  pars = list(
+    c(0.5, 4),
+    c(0.25, 2.25),
+    c(0.5, 0.5)
+    ),
+  user_theme = partial(theme_tufte, base_family = "")
+  ) +
+  ggtitle("Kumaraswamy") +
+  guides(color = "none") +
+  coord_cartesian(ylim = c(0, cart)) +
+  geom_vline(xintercept = 0, linetype = "dotted", color = "grey") +
+  geom_vline(xintercept = 1, linetype = "dotted", color = "grey") +
+  theme(axis.title.x = element_blank())
+p2
+```
+
+## Logit-normal Distribution
+
+```{r, logit-normal-setup, cache=TRUE}
+p3 <- plot_dist(
+  dist = "logitnormal",
+  bounds = c(lbound, ubound),
+  parnames = c("mu", "sigma"),
+  package = "bayesfam",
+  pars = list(
+    c(logit(0.5), 0.65),
+    c(logit(0.25), 0.8),
+    c(logit(0.5), 2.5)
+    ),
+  user_theme = partial(theme_tufte, base_family = "")
+  ) +
+  ggtitle("Logit-normal") +
+  guides(color = "none") +
+  coord_cartesian(ylim = c(0, cart)) +
+  geom_vline(xintercept = 0, linetype = "dotted", color = "grey") +
+  geom_vline(xintercept = 1, linetype = "dotted", color = "grey") +
+  theme(axis.title.x = element_blank())
+p3
+```
+## Cauchit-normal Distribution
+
+```{r, cauchit-normal-setup, cache=TRUE}
+p4 <- plot_dist(
+  dist = "cauchitnormal",
+  bounds = c(lbound, ubound),
+  parnames = c("mu", "sigma"),
+  package = "bayesfam",
+  pars = list(
+    c(cauchit(0.5), 0.4),
+    c(cauchit(0.25), 1),
+    c(cauchit(0.5), 6)
+    ),
+  user_theme = partial(theme_tufte, base_family = "")
+  ) +
+  ggtitle("Cauchit-normal") +
+  guides(color = "none") +
+  coord_cartesian(ylim = c(0, cart)) +
+  geom_vline(xintercept = 0, linetype = "dotted", color = "grey") +
+  geom_vline(xintercept = 1, linetype = "dotted", color = "grey") +
+  theme(axis.title.x = element_blank())
+p4
+```
+
+## Cloglog-normal Distribution
+
+```{r, cloglog-normal-setup, cache=TRUE}
+p5 <- plot_dist(
+  dist = "cloglognormal",
+  bounds = c(lbound, ubound),
+  parnames = c("mu", "sigma"),
+  package = "bayesfam",
+  pars = list(
+    c(cloglog(0.5), 0.3),
+    c(cloglog(0.25), 0.4),
+    c(cloglog(0.5), 3)
+    ),
+  user_theme = partial(theme_tufte, base_family = "")
+  ) +
+  ggtitle("Cloglog-normal") +
+  guides(color = "none") +
+  coord_cartesian(ylim = c(0, cart)) +
+  geom_vline(xintercept = 0, linetype = "dotted", color = "grey") +
+  geom_vline(xintercept = 1, linetype = "dotted", color = "grey") +
+  theme(axis.title.x = element_blank())
+p5
+```
+
+## Simplex Distribution
+
+```{r, simplex-setup}
+p6 <- plot_dist(
+  dist = "simplex",
+  bounds = c(lbound, ubound),
+  parnames = c("mu", "sigma"),
+  package = "bayesfam",
+  pars = list(
+    c(0.5, 1),
+    c(0.25, 1.5),
+    c(0.5, 8)
+    ),
+  user_theme = partial(theme_tufte, base_family = "")
+  ) +
+  ggtitle("Simplex") +
+  guides(color = "none") +
+  coord_cartesian(ylim = c(0, cart)) +
+  geom_vline(xintercept = 0, linetype = "dotted", color = "grey") +
+  geom_vline(xintercept = 1, linetype = "dotted", color = "grey") +
+  theme(axis.title.x = element_blank())
+p6
+```
+
+## Combined
+
+```{r, all-setup}
+((p1 + p2 + p6) / (p3 + p4 + p5)) + theme(text=element_text(size = 12))
+
+ggsave(paste0(figure_path,"unit-distributions.pdf"),
+ width = 210, height = (297/4)*0.87, units = "mm", useDingbats = TRUE)
+```
+
+
+# Link Function Parameter Calibration
+
+## Logit
+```{r, logit-setup}
+logit(0.5)
+logit(0.25)
+```
+
+## Cauchit
+```{r, cauchit-setup}
+cauchit(0.5)
+cauchit(0.25)
+```
+
+## Cloglog
+```{r, cloglog-setup}
+cloglog(0.5)
+cloglog(0.25)
+```
+
+# Unit Interval Links
+```{r, unit-links}
+x <- seq(-5, 5, length.out = 1000)
+data <- data.frame(x = x,
+                   values = c(inv_logit(x),
+                   inv_cauchit(x),
+                   inv_cloglog(x)),
+                   Fun = rep(c("Logit", "Cauchit", "Cloglog"), each = 1000))
+                   
+p1 <- ggplot(data, aes(x, values, col = factor(Fun, levels = c("Logit", "Cauchit", "Cloglog")))) +
+  geom_line(size = 1) +
+  geom_vline(xintercept = 0, color = "grey", linetype = "dashed") +
+  geom_hline(yintercept = 0.5, color = "grey", linetype = "dashed") +
+  scale_x_continuous(breaks = c(-3, 0, 3), labels = c("-3", "0", "3")) +
+  scale_y_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1")) +
+  coord_cartesian(ylim = c(0,1), xlim = c(-3, 3)) +
+  scale_color_scico_d(palette = "batlow", end = 0.8)+
+  ggthemes::theme_tufte(base_family = "") +
+  ggplot2::labs(x = "", y = "", color = "") +
+  ggplot2::theme(
+    legend.position = "bottom",
+    legend.text = ggplot2::element_text(size = 12)
+  ) +
+  ggtitle("Double-Bounded Response Functions")
+p1
+
+
+x <- seq(0.0000000001, 0.9999999999, length.out = 1000)
+data <- data.frame(x = x,
+                   values = c(logit(x),
+                   cauchit(x),
+                   cloglog(x)),
+                   Fun = rep(c("Logit", "Cauchit", "Cloglog"), each = 1000))
+                   
+p2 <- ggplot(data, aes(x, values, col = factor(Fun, levels = c("Logit", "Cauchit", "Cloglog")))) +
+  geom_line(size = 1) +
+  geom_vline(xintercept = 0.5, color = "grey", linetype = "dashed") +
+  geom_hline(yintercept = 0, color = "grey", linetype = "dashed") +
+  scale_y_continuous(breaks = c(-3, 0, 3), labels = c("-3", "0", "3")) +
+  scale_x_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1")) +
+  coord_cartesian(xlim = c(0,1), ylim = c(-3, 3)) +
+  scale_color_scico_d(palette = "batlow", end = 0.8)+
+  ggthemes::theme_tufte(base_family = "") +
+  ggplot2::labs(x = "", y = "", color = "") +
+  ggplot2::theme(
+    legend.position = "bottom",
+    legend.text = ggplot2::element_text(size = 12)
+  ) +
+  ggtitle("Double-Bounded Link Functions")
+p2
+
+
+(p2 + p1) + plot_layout(guides = 'collect') & theme(legend.position = "bottom")
+ggsave(paste0(figure_path, "unit_link_response_showcase.pdf"),
+        width = 210, height = (297/4)*1, units = "mm", useDingbats = TRUE)
+
+```

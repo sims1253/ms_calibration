@@ -1,0 +1,395 @@
+---
+title: "Double-Bounded Analysis"
+author: "Maximilian Scholz"
+date: "09/22/2023"
+output:
+  bookdown::html_document2: default
+---
+
+## Setup
+
+```{r, setup, message=FALSE}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(patchwork)
+library(ggthemes)
+library(viridis)
+library(brew)
+library(latex2exp)
+library(scico)
+
+# Change this to the directory you want the figures to be saved to
+figure_path = "./figures/"
+
+# Change this to the directory that contains the full_sim_result.RDS file
+data_path = "./"
+
+sum_coding <- function(x, lvls = levels(x)) {
+  # codes the first category with -1
+  nlvls <- length(lvls)
+  stopifnot(nlvls > 1)
+  cont <- diag(nlvls)[, -nlvls, drop = FALSE]
+  cont[nlvls, ] <- -1
+  cont <- cont[c(nlvls, 1:(nlvls - 1)), , drop = FALSE]
+  colnames(cont) <- lvls[-1]
+  x <- factor(x, levels = lvls)
+  contrasts(x) <- cont
+  x
+}
+```
+
+## Load Results
+
+```{r, load-results}
+result_df <- readRDS(paste0(data_path, "full_sim_result.RDS"))
+result_df <- result_df %>%
+  # remove causally biased formulas and non-converged models
+  filter(formula != "y ~ x + z2" & formula != "y ~ x + z1 + z2 + z4",
+        divergents <= 10,
+        rhat <= 1.01,
+        ess_bulk > 400,
+        ess_tail > 400) %>%
+  # pretty format all the labels for figure printing
+mutate(
+  fit_link_transformed = case_when(
+    fit_family == "logitnormal" ~ "Logit",
+    fit_family == "cauchitnormal" ~ "Cauchit",
+    fit_family == "cloglognormal" ~ "Cloglog",
+    fit_link == "logit" ~ "Logit",
+    fit_link == "cauchit" ~ "Cauchit",
+    fit_link == "cloglog" ~ "Cloglog",
+    fit_link == "identity" ~ "Identity",
+    TRUE ~ fit_link
+  )
+) %>%
+mutate(
+  data_link_transformed = case_when(
+    data_family == "logitnormal" ~ "Logit",
+    data_family == "cauchitnormal" ~ "Cauchit",
+    data_family == "cloglognormal" ~ "Cloglog",
+    data_link == "logit" ~ "Logit",
+    data_link == "cauchit" ~ "Cauchit",
+    data_link == "cloglog" ~ "Cloglog",
+    data_link == "identity" ~ "Identity",
+    TRUE ~ data_link
+  )
+) %>%
+mutate(
+  fit_family_transformed = case_when(
+  fit_family == "logitnormal" |
+  fit_family == "cauchitnormal" |
+  fit_family == "cloglognormal" ~ "trans. Normal",
+  fit_family == "gaussian" ~ "Normal",
+  fit_family == "kumaraswamy" ~ "Kumaraswamy",
+  fit_family == "beta" ~ "Beta",
+  fit_family == "simplex" ~ "Simplex",
+  TRUE ~ fit_family
+  )
+) %>%
+mutate(
+  data_family_transformed = case_when(
+  data_family == "logitnormal" |
+  data_family == "cauchitnormal" |
+  data_family == "cloglognormal" ~ "trans. Normal",
+  data_family == "kumaraswamy" ~ "Kumaraswamy",
+  data_family == "beta" ~ "Beta",
+  data_family == "simplex" ~ "Simplex",
+  TRUE ~ data_family
+  )
+) %>%
+mutate(
+  shape = case_when(
+  shape == "symmetric" ~ "Symmetric",
+  shape == "asymmetric" ~ "Asymmetric",
+  shape == "bathtub" ~ "Bathtub"
+  )
+) %>%
+  # recreate the dataset id so it is truly unique
+  mutate(dataset_id = as.numeric(as.factor(paste0(
+    dataset_seed,
+    data_family_transformed,
+    data_link_transformed,
+    x_y_coef,
+    y_intercept,
+    sigma_y
+  )))) %>%
+  mutate(abs_bias = abs(bias),
+         formula = factor(formula, levels = c("y ~ x + z1 + z2",
+                                                 "y ~ x + z1",
+                                                 "y ~ x + z1 + z2 + z3")),
+         shape = factor(shape, levels  = c("Symmetric",
+                                           "Asymmetric",
+                                           "Bathtub")))
+        
+  
+```
+
+## RMSE & Bias
+
+```{r, LL-identification}
+cols <- c("dataset_id", "formula", "shape", "fit_link_transformed")
+
+# Remove model where fit link and data link don't match
+df <- result_df %>%
+  filter(fit_link_transformed == data_link_transformed) %>%
+  mutate(
+     fit_link_transformed = factor(fit_link_transformed, levels = 
+                                         c("Logit",
+                                           "Cauchit",
+                                           "Cloglog")),
+   data_link_transformed = factor(data_link_transformed, levels = 
+                                          c("Logit",
+                                            "Cauchit",
+                                            "Cloglog"))
+   )
+  
+# full RMSE results
+p_rmse <- df %>%
+  ggplot(aes(y = fit_family_transformed, x = rmse_s)) +
+  coord_cartesian(xlim = c(0, 0.5)) +
+  scale_x_continuous(labels = c("0", "0.25", "0.5"), breaks = c(0, 0.25, 0.5)) +
+  geom_boxplot() +
+  stat_summary(fun="mean", shape = 4, size = 0.3) +
+  facet_grid(shape + data_link_transformed ~ data_family_transformed) +
+  xlab(TeX("$RMSE(beta_{xy})$")) +
+  ylab("Fit likelihood") +
+  theme_bw(base_size = 12) +
+  theme(strip.text.x = element_text(size = 10),
+        strip.text.y = element_text(size = 10),
+        axis.ticks.y = element_blank())
+  
+p_rmse
+ggsave(paste0(figure_path, "unit_rmse.pdf"), width = 210, height = (297/4) * 3, units = "mm", useDingbats = TRUE)
+
+# RMSE showcase
+p_rmse_showcase <- df %>%
+  filter(data_link_transformed == "Logit") %>%
+  ggplot(aes(y = fit_family_transformed, x = rmse_s)) +
+  coord_cartesian(xlim = c(0, 0.5)) +
+  scale_x_continuous(labels = c("0", "0.25", "0.5"), breaks = c(0, 0.25, 0.5)) +
+  geom_boxplot() +
+  stat_summary(fun="mean", shape = 4, size = 0.3) +
+  facet_grid(shape ~ data_family_transformed) +
+  xlab(TeX("$RMSE(beta_{xy})$")) +
+  ylab("Fit likelihood") +
+  theme_bw(base_size = 12) +
+  theme(strip.text.x = element_text(size = 10),
+        strip.text.y = element_text(size = 10),
+        axis.ticks.y = element_blank())
+
+p_rmse_showcase
+ggsave(paste0(figure_path,"unit_rmse_showcase.pdf"), width = 210, height = (297/4)*1.2, units = "mm", useDingbats = TRUE)
+
+# full absolute bias results
+p_bias <- df %>%
+  ggplot(aes(y = fit_family_transformed, x = abs_bias)) +
+  coord_cartesian(xlim = c(0, 0.5)) +
+  scale_x_continuous(labels = c("0", "0.25", "0.5"), breaks = c(0, 0.25, 0.5)) +
+  geom_boxplot() +
+  stat_summary(fun="mean", shape = 4, size = 0.3) +
+  facet_grid(data_link_transformed + shape ~ data_family_transformed) +
+  xlab(TeX("$abs(bias(beta_{xy}))$")) +
+  ylab("Fit likelihood") +
+  theme_bw(base_size = 12) +
+  theme(strip.text.x = element_text(size = 10),
+        strip.text.y = element_text(size = 10),
+        axis.ticks.y = element_blank())
+  
+p_bias
+ggsave(paste0(figure_path, "unit_bias.pdf"), width = 210, height = (297/4) * 3, units = "mm", useDingbats = TRUE)
+
+# absolute bias showcase
+p_bias_showcase <- df %>%
+  filter(data_link_transformed == "Logit") %>%
+  ggplot(aes(y = fit_family_transformed, x = abs_bias)) +
+  coord_cartesian(xlim = c(0, 0.5)) +
+  scale_x_continuous(labels = c("0", "0.25", "0.5"), breaks = c(0, 0.25, 0.5)) +
+  geom_boxplot() +
+  stat_summary(fun="mean", shape = 4, size = 0.3) +
+  facet_grid(shape ~ data_family_transformed) +
+  xlab(TeX("$abs(bias)(beta_{xy})$")) +
+  ylab("Fit likelihood") +
+  theme_bw(base_size = 12) +
+  theme(strip.text.x = element_text(size = 10),
+        strip.text.y = element_text(size = 10),
+        axis.ticks.y = element_blank())
+
+p_bias_showcase
+ggsave(paste0(figure_path,"unit_bias_showcase.pdf"), width = 210, height = (297/4)*1.2, units = "mm", useDingbats = TRUE)
+```
+
+## ROC
+
+```{r, calibration}
+calibration_df <- result_df %>%
+  # Calculate significance of the .
+  mutate(x_y_coef_cat = ifelse(x_y_coef == 0, 0, 1),
+         sig95 = pq_0.025 > 0 | pq_0.975 < 0,
+         sig90 = pq_0.05 > 0 | pq_0.95 < 0,
+         sig80 = pq_0.1 > 0 | pq_0.9 < 0,
+         sig50 = pq_0.25 > 0 | pq_0.75 < 0)
+
+# We add the normal identity model to all fit links for easier visual comparison
+calibration_df <- calibration_df %>%
+   mutate(
+    fit_family_transformed = case_when(
+    (fit_family_transformed == "Normal" & fit_link_transformed == "Identity") ~ "Normal Identity",
+    TRUE ~ fit_family_transformed)) %>%
+  mutate(
+    fit_link_transformed = case_when(
+    (fit_family_transformed == "Normal Identity") ~ "Logit",
+    TRUE ~ fit_link_transformed))
+data1 <- calibration_df %>%
+  filter(fit_family_transformed == "Normal Identity") %>%
+  mutate(fit_link_transformed = "Cauchit")
+data2 <- calibration_df %>%
+  filter(fit_family_transformed == "Normal Identity") %>%
+  mutate(fit_link_transformed = "Cloglog")
+calibration_df <- rbind(calibration_df, data1, data2)
+
+  calibration_df = calibration_df %>%
+    mutate(fit_link_transformed = factor(fit_link_transformed, levels = 
+                                         c("Logit",
+                                           "Cauchit",
+                                           "Cloglog")))
+
+
+# Function to prepare a TPR/FPR DF averaging over different columns
+roc_df <- function(cols){
+  TPR <- calibration_df %>%
+  filter(x_y_coef != 0) %>%
+  group_by(across(all_of(cols))) %>%
+  summarise(TPR_95 = mean(sig95),
+            TPR_90 = mean(sig90),
+            TPR_80 = mean(sig80),
+            TPR_50 = mean(sig50),
+            TPR_0 = 0,
+            TPR_1 = 1)
+
+FPR <- calibration_df %>%
+  filter(x_y_coef == 0) %>%
+  group_by(across(all_of(cols))) %>%
+  summarise(FPR_95 = mean(sig95),
+            FPR_90 = mean(sig90),
+            FPR_80 = mean(sig80),
+            FPR_50 = mean(sig50),
+            FPR_0 = 0,
+            FPR_1 = 1)
+
+  df = merge(TPR, FPR)
+  df = df %>%
+    pivot_longer(
+      cols = all_of(colnames(df)[! colnames(df) %in% cols]),
+                    names_pattern = "TPR_(.*)$|FPR_(.*)$",
+                    names_to = c("TPR", "FPR")) %>%
+  mutate(TPR = as.numeric(TPR),
+         FPR = as.numeric(FPR)) %>%
+  mutate(CI = if_else(is.na(TPR), FPR, TPR),
+         TPR = if_else(is.na(TPR), NA, value),
+         FPR = if_else(is.na(FPR), NA, value))
+  part1 <- filter(df, is.na(TPR))
+  part1$TPR <- NULL
+  part1$value <- NULL
+  part2 <- filter(df, is.na(FPR))
+  part2$FPR <- NULL
+  part2$value <- NULL
+  df = merge(part1, part2)
+  
+  return(df)
+}
+
+# Full ROC Plot
+df <- roc_df(cols = c("formula", "fit_link_transformed", "fit_family_transformed", "shape", "data_link_transformed", "data_family_transformed"))
+roc <- df %>%
+  ggplot(aes(FPR, TPR)) +
+  coord_cartesian(xlim = c(0,1), ylim = c(0,1)) +
+  scale_x_continuous(breaks = c(0, 0.5, 1),labels = c("0", "0.5", "1")) +
+  scale_y_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1")) +
+  geom_line(aes(color = fit_family_transformed), linetype = "longdash", linewidth = 1) +
+  geom_abline(color = "grey", linetype = "dotted", slope = 1) +
+  geom_point(aes(FPR, TPR, shape = fit_family_transformed), data = filter(df, CI == "95"), size = 3) +
+  facet_grid(shape + data_link_transformed + data_family_transformed ~ formula + fit_link_transformed) +
+  scale_colour_scico_d(palette = "batlow", end = 0.8) +
+  scale_shape_manual(values=c(0, 1, 17, 8, 4, 5)) +
+  theme_bw(base_size = 12) +
+  theme(strip.text.x = element_text(size = 10),
+        strip.text.y = element_text(size = 10),
+        legend.position = "bottom") +
+  labs(color = "Fit family", shape = "Fit family") +
+  xlab("False positive rate") + ylab("True positive rate")
+
+roc
+ggsave(paste0(figure_path, "unit_roc.pdf"), width = 210*2, height = (297/4)*16, units = "mm", useDingbats = TRUE)
+
+# Compare the fit configurations and average over all DGPS
+df <- roc_df(cols = c("formula", "fit_link_transformed", "fit_family_transformed"))
+roc_by_fit <-  df %>%
+  ggplot(aes(FPR, TPR)) +
+  coord_cartesian(xlim = c(0,1), ylim = c(0,1)) +
+  scale_x_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1")) +
+  scale_y_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1")) +
+  geom_line(aes(color = fit_family_transformed), linetype = "longdash", linewidth = 1) +
+  geom_abline(color = "grey", linetype = "dotted", slope = 1) +
+  geom_point(aes(FPR, TPR, shape = fit_family_transformed), data = filter(df, CI == "95"), size = 3) +
+  facet_grid(fit_link_transformed ~ formula) +
+  scale_colour_scico_d(palette = "batlow", end = 0.8) +
+  scale_shape_manual(values=c(0, 1, 17, 8, 4, 5)) +
+  theme_bw(base_size = 12) +
+  theme(strip.text.x = element_text(size = 10),
+        strip.text.y = element_text(size = 10),
+        legend.position = "bottom") +
+  labs(color = "Fit family", shape = "Fit family") +
+  xlab("False positive rate") + ylab("True positive rate")
+
+roc_by_fit
+ggsave(paste0(figure_path, "unit_roc_by_fit.pdf"), width = 210, height = (297/4) * 1.5, units = "mm", useDingbats = TRUE)
+
+# Compare the DGPs and average over all fit configurations
+df <- roc_df(cols = c("shape", "data_link_transformed", "data_family_transformed", "fit_family_transformed"))
+roc_by_dgp <-  df %>%
+  ggplot(aes(FPR, TPR)) +
+  coord_cartesian(xlim = c(0,1), ylim = c(0,1)) +
+  scale_x_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1")) +
+  scale_y_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1")) +
+  geom_line(aes(color = fit_family_transformed), linetype = "longdash", linewidth = 1) +
+  geom_abline(color = "grey", linetype = "dotted", slope = 1) +
+  geom_point(aes(FPR, TPR, shape = fit_family_transformed), data = filter(df, CI == "95"), size = 3) +
+  facet_grid(shape + data_link_transformed ~ data_family_transformed) +
+  scale_colour_scico_d(palette = "batlow", end = 0.8) +
+  scale_shape_manual(values=c(0, 1, 17, 8, 4, 5)) +
+  theme_bw(base_size = 12) +
+  theme(strip.text.x = element_text(size = 10),
+        strip.text.y = element_text(size = 10),
+        legend.position = "bottom") +
+  labs(color = "Fit family", shape = "Fit family") +
+  xlab("False positive rate") + ylab("True positive rate")
+
+roc_by_dgp
+ggsave(paste0(figure_path, "unit_roc_by_dgp.pdf"), width = 210, height = (297/4) * 3, units = "mm", useDingbats = TRUE)
+
+# Compare the DGP shape and fit configurations 
+df <- roc_df(cols = c("fit_link_transformed", "fit_family_transformed", "shape"))
+roc_by_shape_and_fit <-  df %>%
+  ggplot(aes(FPR, TPR)) +
+  coord_cartesian(xlim = c(0,1), ylim = c(0,1)) +
+  scale_x_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1")) +
+  scale_y_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1")) +
+  geom_line(aes(color = fit_family_transformed), linetype = "longdash", linewidth = 1) +
+  geom_abline(color = "grey", linetype = "dotted", slope = 1) +
+  geom_point(aes(FPR, TPR, shape = fit_family_transformed),
+             data = filter(df, CI == "95"), size = 3) +
+  #geom_point(aes(color = fit_family_transformed), alpha = 0.5) +
+  facet_grid(shape ~ fit_link_transformed) +
+  scale_colour_scico_d(palette = "batlow", end = 0.8) +
+  scale_shape_manual(values=c(0, 1, 17, 8, 4, 5)) +
+  theme_bw(base_size = 12) +
+  theme(strip.text.x = element_text(size = 10),
+        strip.text.y = element_text(size = 10),
+        legend.position = "bottom") +
+  labs(color = "Fit family", shape = "Fit family") +
+  xlab("False positive rate") + ylab("True positive rate")
+
+roc_by_shape_and_fit
+ggsave(paste0(figure_path, "unit_roc_shape_and_fit.pdf"), width = 210, height = (297/4) * 1.5, units = "mm", useDingbats = TRUE)
+```
