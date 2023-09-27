@@ -18,6 +18,8 @@ library(viridis)
 library(brew)
 library(latex2exp)
 library(scico)
+library(DescTools)
+library(brms)
 
 # Change this to the directory you want the figures to be saved to
 figure_path = "./figures/"
@@ -277,6 +279,104 @@ calibration_df <- rbind(calibration_df, data1)
                                          c("Log",
                                            "Softplus")))
 
+cols = c("formula", "fit_link_transformed", "fit_family_transformed", "shape", "data_link_transformed", "data_family_transformed")
+
+TPR <- calibration_df %>%
+filter(x_y_coef != 0) %>%
+group_by(across(all_of(cols))) %>%
+summarise(TPR_95 = mean(sig95),
+          TPR_90 = mean(sig90),
+          TPR_80 = mean(sig80),
+          TPR_50 = mean(sig50),
+          TPR_0 = 0,
+          TPR_1 = 1)
+
+FPR <- calibration_df %>%
+filter(x_y_coef == 0) %>%
+group_by(across(all_of(cols))) %>%
+summarise(FPR_95 = mean(sig95),
+          FPR_90 = mean(sig90),
+          FPR_80 = mean(sig80),
+          FPR_50 = mean(sig50),
+          FPR_0 = 0,
+          FPR_1 = 1)
+
+df = merge(TPR, FPR)
+auc <- vector(mode = "numeric", length = nrow(df))
+for (i in seq_len(nrow(df))) {
+  auc[[i]] <- AUC(
+    x = c(df$FPR_0[[i]], df$FPR_95[[i]], df$FPR_90[[i]], df$FPR_80[[i]], df$FPR_50[[i]],df$FPR_1[[i]]),
+    y = c(df$TPR_0[[i]], df$TPR_95[[i]], df$TPR_90[[i]], df$TPR_80[[i]], df$TPR_50[[i]], df$TPR_1[[i]])
+  )
+}
+df$auc <- auc
+df <- df %>%
+  mutate(formula = sum_coding(
+    factor(formula,
+           levels = c("y ~ x + z1 + z2",
+                      "y ~ x + z1",
+                      "y ~ x + z1 + z2 + z3")))) %>%
+  mutate(data_link_transformed = sum_coding(
+    factor(data_link_transformed, levels = c("Log",  "Softplus"))
+  )) %>%
+  mutate(fit_family_transformed = sum_coding(
+    factor(fit_family_transformed,
+           levels = c("Gamma",
+                      "Weibull",
+                      "Beta prime",
+                      "trans. Normal",
+                      "Fréchet",
+                      "Gompertz",
+                      "Normal",
+                      "Normal Identity")))) %>%
+  mutate(shape = sum_coding(
+    factor(shape, levels = c("Thin Tail", "Heavy Tail", "Ramp")))
+  )
+
+m1 = brm(auc ~ 1 +
+         fit_link_transformed + fit_family_transformed +
+         data_link_transformed + data_family_transformed +
+         shape + formula +
+         fit_link_transformed * data_link_transformed +
+         fit_family_transformed * data_family_transformed,
+         data = df, family = Beta(), cores = 4, warmup = 1000, iter = 3500,
+         backend = "cmdstan")
+summary(m1)
+
+conditional_effects(m1, effects = "fit_link_transformed:data_link_transformed",
+                    conditions = data.frame(
+                      shape = NA,
+                      data_family_transformed = NA,
+                      fit_family_transformed = NA,
+                      formula = NA)
+                    )
+
+p1 = conditional_effects(m1, effects = "fit_family_transformed:data_family_transformed",
+                    conditions = data.frame(
+                      shape = NA,
+                      data_link_transformed = NA,
+                      fit_link_transformed = NA,
+                      formula = NA))
+plot(p1, plot = FALSE)[[1]] + scale_color_scico_d(palette = "batlow", end = 0.8)
+
+conditional_effects(m1, effects = "fit_link_transformed",
+                    conditions = data.frame(
+                      shape = NA,
+                      data_family_transformed = NA,
+                      fit_family_transformed = NA,
+                      data_link_transformed = NA,
+                      formula = NA)
+                    )
+
+conditional_effects(m1, effects = "fit_family_transformed",
+                    conditions = data.frame(
+                      shape = NA,
+                      data_family_transformed = NA,
+                      fit_link_transformed = NA,
+                      data_link_transformed = NA,
+                      formula = NA)
+                    )
+
 
 # Function to prepare a TPR/FPR DF averaging over different columns
 roc_df <- function(cols){
@@ -441,19 +541,19 @@ roc_by_shape_and_fit <-  df %>%
 roc_by_shape_and_fit
 ggsave(paste0(figure_path, "positive_roc_dgp_lik_and_fit.pdf"), width = 210, height = (297/4) * 1.2, units = "mm", useDingbats = TRUE)
 
-# Compare the DGP Likelihood and fit configurations 
-df <- roc_df(cols = c("fit_link_transformed", "fit_family_transformed", "data_family_transformed", "data_link_transformed"))
+# Compare the links
+df <- roc_df(cols = c("fit_link_transformed", "data_link_transformed"))
 roc_by_shape_and_fit <-  df %>%
   ggplot(aes(FPR, TPR)) +
   coord_cartesian(xlim = c(0,1), ylim = c(0,1)) +
   scale_x_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1")) +
   scale_y_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1")) +
-  geom_line(aes(color = fit_family_transformed), linetype = "longdash", linewidth = 1) +
+  geom_line(aes(color = fit_link_transformed), linetype = "longdash", linewidth = 1) +
   geom_abline(color = "grey", linetype = "dotted", slope = 1) +
-  geom_point(aes(FPR, TPR, shape = fit_family_transformed),
+  geom_point(aes(FPR, TPR, shape = fit_link_transformed),
              data = filter(df, CI == "95"), size = 2) +
   #geom_point(aes(color = fit_family_transformed), alpha = 0.5) +
-  facet_grid(fit_link_transformed ~ data_link_transformed + data_family_transformed) +
+  facet_grid(. ~ data_link_transformed) +
   scale_colour_scico_d(palette = "batlow", end = 0.8) +
   scale_shape_manual(values=c(0, 1, 8, 4, 5, 17, 6, 7)) +
   theme_bw(base_size = 12) +
@@ -464,5 +564,57 @@ roc_by_shape_and_fit <-  df %>%
   xlab("False positive rate") + ylab("True positive rate")
 
 roc_by_shape_and_fit
-ggsave(paste0(figure_path, "positive_roc_LL.pdf"), width = 210*2, height = (297/4) * 1.2*2, units = "mm", useDingbats = TRUE)
+ggsave(paste0(figure_path, "positive_roc_links.png"), width = 210*2, height = (297/4) * 1.2*2, units = "mm")#, useDingbats = TRUE)
+
+# Compare the likelihoods
+df <- roc_df(cols = c("fit_family_transformed", "data_family_transformed"))
+roc_by_shape_and_fit <-  df %>%
+  ggplot(aes(FPR, TPR)) +
+  coord_cartesian(xlim = c(0,1), ylim = c(0,1)) +
+  scale_x_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1")) +
+  scale_y_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1")) +
+  geom_line(aes(color = fit_family_transformed), linetype = "longdash", linewidth = 1) +
+  geom_abline(color = "grey", linetype = "dotted", slope = 1) +
+  geom_point(aes(FPR, TPR, shape = fit_family_transformed),
+             data = filter(df, CI == "95"), size = 2) +
+  #geom_point(aes(color = fit_family_transformed), alpha = 0.5) +
+  facet_grid(. ~ data_family_transformed) +
+  scale_colour_scico_d(palette = "batlow", end = 0.8) +
+  scale_shape_manual(values=c(0, 1, 8, 4, 5, 17, 6, 7)) +
+  theme_bw(base_size = 12) +
+  theme(strip.text.x = element_text(size = 10),
+        strip.text.y = element_text(size = 10),
+        legend.position = "bottom") +
+  labs(color = "Fit family", shape = "Fit family") +
+  xlab("False positive rate") + ylab("True positive rate")
+
+roc_by_shape_and_fit
+ggsave(paste0(figure_path, "positive_roc_likelihoods.png"), width = 210*2, height = (297/4) * 1.2*2, units = "mm")#, useDingbats = TRUE)
+
+# Compare LLs
+df <- roc_df(cols = c("fit_family_transformed", "fit_link_transformed", "data_family_transformed", "data_link_transformed")) %>%
+  mutate(data_LL = paste0(data_family_transformed, data_link_transformed),
+         fit_LL = paste0(fit_family_transformed, fit_link_transformed))
+roc_by_LL <-  df %>%
+  ggplot(aes(FPR, TPR)) +
+  coord_cartesian(xlim = c(0,1), ylim = c(0,1)) +
+  scale_x_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1")) +
+  scale_y_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1")) +
+  geom_line(aes(color = fit_LL), linetype = "longdash", linewidth = 1) +
+  geom_abline(color = "grey", linetype = "dotted", slope = 1) +
+  geom_point(aes(FPR, TPR, shape = fit_LL),
+             data = filter(df, CI == "95"), size = 2) +
+  #geom_point(aes(color = fit_family_transformed), alpha = 0.5) +
+  facet_wrap(. ~ data_LL) +
+  scale_colour_scico_d(palette = "batlow", end = 0.8) +
+  scale_shape_manual(values=seq(1,16)) +
+  theme_bw(base_size = 12) +
+  theme(strip.text.x = element_text(size = 10),
+        strip.text.y = element_text(size = 10),
+        legend.position = "bottom") +
+  labs(color = "Fit family", shape = "Fit family") +
+  xlab("False positive rate") + ylab("True positive rate")
+
+roc_by_LL
+ggsave(paste0(figure_path, "positive_roc_LL.png"), width = 210*2, height = (297/4) * 1.2*3, units = "mm")#, useDingbats = TRUE)
 ```
