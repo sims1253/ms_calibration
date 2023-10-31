@@ -27,6 +27,9 @@ figure_path = "./figures/"
 # Change this to the directory that contains the full_sim_result.RDS file
 data_path = "./"
 
+# This is used for brms model fitting
+NCORES = 6
+
 sum_coding <- function(x, lvls = levels(x)) {
   # codes the first category with -1
   nlvls <- length(lvls)
@@ -41,9 +44,9 @@ sum_coding <- function(x, lvls = levels(x)) {
 }
 ```
 
-## Load Results
+## Preprocess
 
-```{r, load-results}
+```{r, Preprocess}
 result_df <- readRDS(paste0(data_path, "full_sim_result.RDS"))
 result_df <- result_df %>%
   # remove causally biased formulas and non-converged models
@@ -143,7 +146,18 @@ df <- result_df %>%
    data_link_transformed = factor(data_link_transformed, levels = 
                                           c("Logit",
                                             "Cauchit",
-                                            "Cloglog"))
+                                            "Cloglog")),
+   data_family_transformed = factor(data_family_transformed, levels = 
+                                          c("Beta",
+                                            "Kumaraswamy",
+                                            "Simplex",
+                                            "trans. Normal")),
+   data_family_transformed = factor(data_family_transformed, levels = 
+                                          c("Beta",
+                                            "Kumaraswamy",
+                                            "Simplex",
+                                            "trans. Normal",
+                                            "Normal"))
    )
   
 # full RMSE results
@@ -167,11 +181,11 @@ ggsave(paste0(figure_path, "unit_rmse.pdf"), width = 210, height = (297/4) * 3, 
 # RMSE showcase
 p_rmse_showcase <- df %>%
   filter(data_link_transformed == "Logit") %>%
-  ggplot(aes(y = fit_family_transformed, x = rmse_s)) +
+  ggplot(aes(y = rmse_s, x = data_family_transformed)) +
   coord_cartesian(xlim = c(0, 0.5)) +
   scale_x_continuous(labels = c("0", "0.25", "0.5"), breaks = c(0, 0.25, 0.5)) +
   geom_boxplot() +
-  stat_summary(fun="mean", shape = 4, size = 0.3) +
+    stat_summary(fun="mean", shape = 4, size = 0.3) +
   facet_grid(shape ~ data_family_transformed) +
   xlab(TeX("$RMSE(beta_{xy})$")) +
   ylab("Fit likelihood") +
@@ -181,7 +195,37 @@ p_rmse_showcase <- df %>%
         axis.ticks.y = element_blank())
 
 p_rmse_showcase
-ggsave(paste0(figure_path,"unit_rmse_showcase.pdf"), width = 210, height = (297/4)*1.2, units = "mm", useDingbats = TRUE)
+ggsave(paste0(figure_path,"unit_rmse_showcase.pdf"), width = 210, height = (297/4)*1.3, units = "mm", useDingbats = TRUE)
+
+p_rmse_showcase <- df %>%
+  filter(data_link_transformed == "Logit") %>%
+  group_by(data_family_transformed, fit_family_transformed, shape) %>% 
+  summarise(mean_rmse_s = median(rmse_s),
+         min_rmse = quantile(rmse_s, probs = c(0.025)),
+         max_rmse = quantile(rmse_s, probs = c(0.975))) %>%
+  ggplot(
+    aes(y = data_family_transformed,
+        x = mean_rmse_s,
+        xmin = min_rmse,
+        xmax = max_rmse,
+        color = fit_family_transformed)) +
+  #coord_cartesian(xlim = c(0, 0.5)) +
+  #scale_x_continuous(labels = c("0", "0.25", "0.5"), breaks = c(0, 0.25, 0.5)) +
+  geom_pointrange(size = 0.4, position = position_dodge(width = 0.9)) +
+  #geom_point(position = position_dodge(width = 0.9), size = 4 / 3^0.25) +
+  #geom_errorbar(position = position_dodge(width = 0.9), width = 0.3) +
+  scale_color_scico_d(palette = "batlow", end = 0.8) +
+  facet_grid( ~ shape, scales = "free_x") +
+  xlab(TeX("$RMSE(beta_{xy})$")) +
+  ylab("Data likelihood") +
+  labs(color = "Fit likelihood") +
+  theme_bw(base_size = 12) +
+  theme(strip.text.x = element_text(size = 10),
+        strip.text.y = element_text(size = 10),
+        axis.ticks.y = element_blank())
+
+p_rmse_showcase
+ggsave(paste0(figure_path,"unit_rmse_showcase_pointrange.pdf"), width = 210, height = (297/4)*0.9, units = "mm", useDingbats = TRUE)
 
 # full absolute bias results
 p_bias <- df %>%
@@ -221,6 +265,102 @@ p_bias_showcase
 ggsave(paste0(figure_path,"unit_bias_showcase.pdf"), width = 210, height = (297/4)*1.2, units = "mm", useDingbats = TRUE)
 ```
 
+## RMSE Models
+```{r, rmse-model}
+# Remove model where fit link and data link don't match
+df <- result_df %>%
+  filter(fit_link_transformed == data_link_transformed) %>%
+  mutate(
+     fit_link_transformed = factor(fit_link_transformed, levels = 
+                                         c("Logit",
+                                           "Cauchit",
+                                           "Cloglog")),
+   data_link_transformed = factor(data_link_transformed, levels = 
+                                          c("Logit",
+                                            "Cauchit",
+                                            "Cloglog"))
+   )
+
+# Were using a trick here to make the model fit faster. Instead of using a lognormal
+# we use a normal on the logged outcomes, as the code for the normal is highly
+# optimized.m
+m1 = brm(log(rmse_s) ~ 1 +
+         fit_family_transformed + data_family_transformed +
+         fit_family_transformed * data_family_transformed * fit_link_transformed +
+         fit_family_transformed * data_family_transformed +
+         shape + formula +
+         fit_family_transformed * shape,# + fit_family_transformed * fit_link_transformed,
+         data = df, family = gaussian(),
+         chains = 1, cores = 1, threads = NCORES,
+         warmup = 500, iter = 2500,
+         file = paste0(data_path,"rmse_s.RDS"))
+summary(m1) # Diagnostics look good
+
+m2 = brm(log(rmse_s) ~ 1 +
+         fit_family_transformed + data_family_transformed +
+         fit_family_transformed * data_family_transformed * fit_link_transformed +
+         shape + formula +
+         fit_family_transformed * shape * fit_link_transformed,
+         data = df, family = gaussian(),
+         chains = 1, cores = 1, threads = NCORES,
+         warmup = 500, iter = 2500,
+         file = paste0(data_path,"rmse_s_2.RDS"))
+
+m3 = brm(log(rmse_s) ~ 1 +
+         fit_family_transformed + data_family_transformed + shape + formula +
+         fit_family_transformed * data_family_transformed * fit_link_transformed * shape,
+         data = df, family = gaussian(),
+         chains = 1, cores = 1, threads = NCORES,
+         warmup = 500, iter = 2500,
+         file = paste0(data_path,"rmse_s_3.RDS"))
+
+m4 = brm(log(rmse_s) ~ 1 +
+           formula +
+           fit_family_transformed:data_family_transformed:fit_link_transformed:shape,
+         data = df, family = gaussian(),
+         chains = 1, cores = 1, threads = NCORES,
+         warmup = 500, iter = 2500,
+         file = paste0(data_path,"rmse_s_4.RDS"))
+
+#geom pointrange
+
+ce = conditional_effects(m2,
+                              effects = "data_family_transformed:fit_family_transformed",
+                              conditions = data.frame(
+                                cond__ = c("Symmetric", "Asymmetric", "Bathtub"),
+                                shape = c("Symmetric", "Asymmetric", "Bathtub"),
+                                data_family_transformed = NA,
+                                fit_family_transformed = NA,
+                                fit_link_transformed = c("Cloglog"),
+                                formula = NA)
+                              )
+
+
+p1 = plot(ce,
+          plot = FALSE)[[1]]
+p1 +
+  scale_color_scico_d(palette = "batlow", end = 0.8) +
+  coord_flip() +
+  xlab("Data Family") + ylab(TeX("$RMSE(beta_{xy})$")) +
+  theme_bw(base_size = 12) +
+  theme(strip.text.x = element_text(size = 10),
+        strip.text.y = element_text(size = 10),
+        axis.ticks.y = element_blank()) +
+  labs(color = "Fit Family", fill = "Fit Family")
+ggsave(paste0(figure_path,"unit_rmse_s_cond_fam_fam.pdf"), width = 210, height = (297/4), units = "mm", useDingbats = TRUE)
+
+
+
+  conditional_effects(m1, effects = "shape:fit_family_transformed",
+                    conditions = data.frame(
+                      shape = NA,
+                      data_family_transformed = NA,
+                      fit_family_transformed = NA,
+                      formula = NA)
+                    )
+```
+
+
 ## ROC
 
 ```{r, calibration}
@@ -250,13 +390,13 @@ data2 <- calibration_df %>%
   mutate(fit_link_transformed = "Cloglog")
 calibration_df <- rbind(calibration_df, data1, data2)
 
-  calibration_df = calibration_df %>%
-    mutate(fit_link_transformed = factor(fit_link_transformed, levels = 
+calibration_df = calibration_df %>%
+  mutate(fit_link_transformed = factor(fit_link_transformed, levels = 
                                          c("Logit",
                                            "Cauchit",
                                            "Cloglog")))
   
-  cols = c("formula", "fit_link_transformed", "fit_family_transformed", "shape", "data_link_transformed", "data_family_transformed")
+cols = c("formula", "fit_link_transformed", "fit_family_transformed", "shape", "data_link_transformed", "data_family_transformed")
 
 TPR <- calibration_df %>%
 filter(x_y_coef != 0) %>%
@@ -278,6 +418,38 @@ summarise(FPR_95 = mean(sig95),
           FPR_0 = 0,
           FPR_1 = 1)
 
+# Figure to showcase the potential FPR inflation of the normal likelihood
+FPR %>%
+  filter(fit_family_transformed == "Normal" | fit_family_transformed =="Normal Identity" ) %>%
+  filter(!(fit_family_transformed == "Normal Identity" & (fit_link_transformed == "Cauchit" |
+                                                          fit_link_transformed == "Cloglog"))) %>%
+   mutate(fit_link_transformed = case_when(
+     fit_family_transformed == "Normal Identity" ~ "Identity",
+     TRUE ~ fit_link_transformed)) %>%
+  mutate(fit_link_transformed = factor(fit_link_transformed, levels = c("Logit",
+                                           "Cauchit",
+                                           "Cloglog",
+                                           "Identity"))) %>%
+  group_by(fit_link_transformed) %>% 
+  mutate(mean = mean(FPR_95)) %>%
+  ggplot(aes(FPR_95)) +
+  geom_histogram() +
+  facet_grid(. ~ fit_link_transformed) +
+  geom_vline(xintercept = 0.05) +
+  geom_vline(aes(xintercept = mean), linetype = "longdash") +
+  scale_x_continuous(breaks = c(0.05, 0.1)) +
+  xlab("FPR of 95% CIs") +
+  ylab("") +
+  theme_bw(base_size = 12) +
+  theme(strip.text.x = element_text(size = 10),
+        strip.text.y = element_text(size = 10),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank())
+
+ggsave(paste0(figure_path,"unit_normal_fpr.pdf"), width = 210, height = (297/4)*0.5, units = "mm", useDingbats = TRUE)
+
+  
+  
 df = merge(TPR, FPR)
 auc <- vector(mode = "numeric", length = nrow(df))
 for (i in seq_len(nrow(df))) {
@@ -314,28 +486,36 @@ m1 = brm(auc ~ 1 +
          shape + formula +
          fit_link_transformed * data_link_transformed +
          fit_family_transformed * data_family_transformed,
-         data = df, family = Beta(), cores = 4, warmup = 1000, iter = 3500,
-         backend = "cmdstan")
-summary(m1)
+         data = df, family = Beta(), cores = NCORES, warmup = 1000, iter = 3500,
+         file = paste0(data_path,"m1.RDS"))
+summary(m1) # Diagnostics look good
 
-p0 = conditional_effects(m1, effects = "fit_link_transformed:data_link_transformed",
+p1 = conditional_effects(m1, effects = "data_link_transformed:fit_link_transformed",
                     conditions = data.frame(
                       shape = NA,
                       data_family_transformed = NA,
                       fit_family_transformed = NA,
                       formula = NA)
                     )
-plot(p0, plot = FALSE)[[1]] + scale_color_scico_d(palette = "batlow", end = 0.8)
+plot(p1, plot = FALSE)[[1]] + scale_color_scico_d(palette = "batlow", end = 0.8) +
+  xlab("Data Link") + ylab("AUC")+
+   theme_bw(base_size = 12) +
+        labs(color = "Fit Link", fill = "Fit Link")
+ggsave(paste0(figure_path,"unit_auc_cond_fit_fit.pdf"), width = 210/1.5, height = (297/4)/1.2, units = "mm", useDingbats = TRUE)
 
-p1 = conditional_effects(m1, effects = "fit_family_transformed:data_family_transformed",
+p2 = conditional_effects(m1, effects = "data_family_transformed:fit_family_transformed",
                     conditions = data.frame(
                       shape = NA,
                       data_link_transformed = NA,
                       fit_link_transformed = NA,
                       formula = NA))
-plot(p1, plot = FALSE)[[1]] + scale_color_scico_d(palette = "batlow", end = 0.8)
+plot(p2, plot = FALSE)[[1]] + scale_color_scico_d(palette = "batlow", end = 0.8) +
+   xlab("Data Family") + ylab("AUC")+
+   theme_bw(base_size = 12) +
+        labs(color = "Fit Family", fill = "Fit Family")
+ggsave(paste0(figure_path,"unit_auc_cond_fam_fam.pdf"), width = 210, height = (297/4), units = "mm", useDingbats = TRUE)
 
-conditional_effects(m1, effects = "fit_link_transformed",
+p3 = conditional_effects(m1, effects = "fit_link_transformed",
                     conditions = data.frame(
                       shape = NA,
                       data_family_transformed = NA,
@@ -343,8 +523,10 @@ conditional_effects(m1, effects = "fit_link_transformed",
                       data_link_transformed = NA,
                       formula = NA)
                     )
+plot(p3, plot = FALSE)[[1]] + xlab("Fit Link") + ylab("AUC") + theme_bw(base_size = 12)
+ggsave(paste0(figure_path,"unit_auc_cond_link.pdf"), width = 210/2, height = (297/4), units = "mm", useDingbats = TRUE)
 
-conditional_effects(m1, effects = "fit_family_transformed",
+p4 = conditional_effects(m1, effects = "fit_family_transformed",
                     conditions = data.frame(
                       shape = NA,
                       data_family_transformed = NA,
@@ -352,7 +534,8 @@ conditional_effects(m1, effects = "fit_family_transformed",
                       data_link_transformed = NA,
                       formula = NA)
                     )
-
+plot(p4, plot = FALSE)[[1]] + xlab("Fit Family") + ylab("AUC") + theme_bw(base_size = 12)
+ggsave(paste0(figure_path,"unit_auc_cond_fam.pdf"), width = 210/1.2, height = (297/4), units = "mm", useDingbats = TRUE)
 
 # Function to prepare a TPR/FPR DF averaging over different columns
 roc_df <- function(cols){

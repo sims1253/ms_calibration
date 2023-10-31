@@ -41,8 +41,9 @@ sum_coding <- function(x, lvls = levels(x)) {
 }
 ```
 
+## Preprocess
 
-```{r, load-results}
+```{r, preprocess}
 result_df <- readRDS(paste0(data_path, "full_sim_result.RDS"))
 result_df <- result_df %>%
 filter(fit_family != "inverse.gaussian",
@@ -188,7 +189,7 @@ p_rmse_log_showcase <- df %>%
         axis.ticks.y = element_blank())
 
 p_rmse_log_showcase
-ggsave(paste0(figure_path,"positive_rmse_log_showcase.pdf"), width = 210, height = (297/4)*1.5, units = "mm", useDingbats = TRUE)
+ggsave(paste0(figure_path,"positive_rmse_log_showcase.pdf"), width = 210, height = (297/4)*1.6, units = "mm", useDingbats = TRUE)
 
 # RMSE softplus showcase
 p_rmse_softplus_showcase <- df %>%
@@ -274,8 +275,8 @@ data1 <- calibration_df %>%
 
 calibration_df <- rbind(calibration_df, data1)
 
-  calibration_df = calibration_df %>%
-    mutate(fit_link_transformed = factor(fit_link_transformed, levels = 
+calibration_df = calibration_df %>%
+  mutate(fit_link_transformed = factor(fit_link_transformed, levels = 
                                          c("Log",
                                            "Softplus")))
 
@@ -339,27 +340,36 @@ m1 = brm(auc ~ 1 +
          shape + formula +
          fit_link_transformed * data_link_transformed +
          fit_family_transformed * data_family_transformed,
-         data = df, family = Beta(), cores = 4, warmup = 1000, iter = 3500,
-         backend = "cmdstan")
+         data = df, family = Beta(), cores = 4, warmup = 1000, iter = 3500,file = paste0(data_path, "m1.RDS"))
 summary(m1)
 
-conditional_effects(m1, effects = "fit_link_transformed:data_link_transformed",
+p1 = conditional_effects(m1, effects = "data_link_transformed:fit_link_transformed",
                     conditions = data.frame(
                       shape = NA,
                       data_family_transformed = NA,
                       fit_family_transformed = NA,
                       formula = NA)
                     )
+plot(p1, plot = FALSE)[[1]] + scale_color_scico_d(palette = "batlow", end = 0.8) +
+  xlab("Data Link") + ylab("AUC")+
+  theme_bw(base_size = 12) +
+  labs(color = "Fit Link", fill = "Fit Link")
+ggsave(paste0(figure_path,"positive_auc_cond_link_link.pdf"), width = 210, height = (297/4)/1.5, units = "mm", useDingbats = TRUE)
 
-p1 = conditional_effects(m1, effects = "fit_family_transformed:data_family_transformed",
+p2 = conditional_effects(m1, effects = "data_family_transformed:fit_family_transformed",
                     conditions = data.frame(
                       shape = NA,
                       data_link_transformed = NA,
                       fit_link_transformed = NA,
                       formula = NA))
-plot(p1, plot = FALSE)[[1]] + scale_color_scico_d(palette = "batlow", end = 0.8)
+plot(p2, plot = FALSE)[[1]] + scale_color_scico_d(palette = "batlow", end = 0.8) +
+  xlab("Data Family") + ylab("AUC")+
+   theme_bw(base_size = 12) +
+        labs(color = "Fit Family", fill = "Fit Family")
+ggsave(paste0(figure_path,"positive_auc_cond_fam_fam.pdf"), width = 210, height = (297/4)*1.2, units = "mm", useDingbats = TRUE)
 
-conditional_effects(m1, effects = "fit_link_transformed",
+
+p3 = conditional_effects(m1, effects = "fit_link_transformed",
                     conditions = data.frame(
                       shape = NA,
                       data_family_transformed = NA,
@@ -367,8 +377,13 @@ conditional_effects(m1, effects = "fit_link_transformed",
                       data_link_transformed = NA,
                       formula = NA)
                     )
+plot(p3, plot = FALSE)[[1]] + scale_color_scico_d(palette = "batlow", end = 0.8) +
+  xlab("Fit Link") + ylab("AUC")+
+   theme_bw(base_size = 12)
+ggsave(paste0(figure_path,"positive_auc_cond_link.pdf"), width = 210/2, height = (297/4)*1.2, units = "mm", useDingbats = TRUE)
 
-conditional_effects(m1, effects = "fit_family_transformed",
+
+p4 = conditional_effects(m1, effects = "fit_family_transformed",
                     conditions = data.frame(
                       shape = NA,
                       data_family_transformed = NA,
@@ -376,6 +391,10 @@ conditional_effects(m1, effects = "fit_family_transformed",
                       data_link_transformed = NA,
                       formula = NA)
                     )
+plot(p4, plot = FALSE)[[1]] + scale_color_scico_d(palette = "batlow", end = 0.8) +
+  xlab("Fit Family") + ylab("AUC")+
+   theme_bw(base_size = 12)
+ggsave(paste0(figure_path,"positive_auc_cond_fam.pdf"), width = 210, height = (297/4)*1.2, units = "mm", useDingbats = TRUE)
 
 
 # Function to prepare a TPR/FPR DF averaging over different columns
