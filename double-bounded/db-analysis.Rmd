@@ -489,8 +489,8 @@ p2$`data_family_transformed:fit_family_transformed` %>%
         color = effect2__)) +
   geom_pointrange(size = 0.4, linewidth = 0.8, position = position_dodge(width = 0.4)) +
   scale_color_scico_d(palette = "batlow", end = 0.8) +
-  xlab("Data Likelihood") +
-  ylab("AUC ROC") +
+  xlab("Data likelihood") +
+  ylab("AUC") +
   labs(color = "Fit likelihood") +
   theme_bw(base_size = 12) +
   theme(strip.text.x = element_text(size = 9),
