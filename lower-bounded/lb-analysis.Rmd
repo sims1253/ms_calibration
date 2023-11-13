@@ -20,6 +20,7 @@ library(latex2exp)
 library(scico)
 library(DescTools)
 library(brms)
+library(ggh4x)
 
 # Change this to the directory you want the figures to be saved to
 figure_path = "./figures/"
@@ -191,6 +192,39 @@ p_rmse_log_showcase <- df %>%
 p_rmse_log_showcase
 ggsave(paste0(figure_path,"positive_rmse_log_showcase.pdf"), width = 210, height = (297/4)*1.6, units = "mm", useDingbats = TRUE)
 
+# RMSE log pointrange showcase
+scales <- list(
+  scale_x_continuous(limits = c(0, 0.2), breaks = c(0, 0.1, 0.2), labels = c("0", "0.1", "0.2")),
+  scale_x_continuous(limits = c(0, 0.3), breaks = c(0, 0.1, 0.2, 0.3), labels = c("0", "0.1", "0.2", "0.3")),
+  scale_x_continuous(limits = c(0, 0.5), breaks = c(0, 0.2, 0.4), labels = c("0", "0.2", "0.4"))
+)
+p_rmse_pointrange <- df %>%
+  filter(data_link_transformed == "Log") %>%
+  group_by(data_family_transformed, fit_family_transformed, shape) %>% 
+  summarise(median_rmse_s = median(rmse_s),
+            min_rmse = quantile(rmse_s, probs = c(0.025)),
+            max_rmse = quantile(rmse_s, probs = c(0.975))) %>%
+  ggplot(
+    aes(y = data_family_transformed,
+        x = median_rmse_s,
+        xmin = min_rmse,
+        xmax = max_rmse,
+        color = fit_family_transformed)) +
+  geom_pointrange(size = 0.18, position = position_dodge(width = 0.8)) +
+  scale_color_scico_d(palette = "batlow", end = 0.8) +
+  facet_grid(~ shape, scales = "free_x") +
+  facetted_pos_scales(x = scales) +
+  xlab(TeX("$RMSE(beta_{xy})$")) +
+  ylab("Data likelihood") +
+  labs(color = "Fit likelihood") +
+  theme_bw(base_size = 12) +
+  theme(strip.text.x = element_text(size = 10),
+        strip.text.y = element_text(size = 10),
+        axis.ticks.y = element_blank())
+
+p_rmse_pointrange
+ggsave(paste0(figure_path,"positive_rmse_showcase_pointrange.pdf"), width = 210, height = (297/4)*1.4, units = "mm", useDingbats = TRUE)
+
 # RMSE softplus showcase
 p_rmse_softplus_showcase <- df %>%
   filter(data_link_transformed == "Softplus") %>%
@@ -355,6 +389,25 @@ plot(p1, plot = FALSE)[[1]] + scale_color_scico_d(palette = "batlow", end = 0.8)
   theme_bw(base_size = 12) +
   labs(color = "Fit Link", fill = "Fit Link")
 ggsave(paste0(figure_path,"positive_auc_cond_link_link.pdf"), width = 210, height = (297/4)/1.5, units = "mm", useDingbats = TRUE)
+
+p1$`data_link_transformed:fit_link_transformed` %>%
+  ggplot(
+    aes(y = estimate__,
+        x = effect1__,
+        ymin = lower__,
+        ymax = upper__,
+        color = effect2__)) +
+  geom_pointrange(size = 0.4, linewidth = 0.8, position = position_dodge(width = 0.2)) +
+  scale_color_scico_d(palette = "batlow", end = 0.8) +
+  xlab("Data Link") +
+  ylab("AUC ROC") +
+  labs(color = "Fit Link") +
+  theme_bw(base_size = 12) +
+  theme(strip.text.x = element_text(size = 9),
+        strip.text.y = element_text(size = 9),
+        axis.ticks.y = element_blank())
+
+ggsave(paste0(figure_path,"positive_auc_cond_link_link.pdf"), width = 210, height = (297/4)*0.6, units = "mm", useDingbats = TRUE)
 
 p2 = conditional_effects(m1, effects = "data_family_transformed:fit_family_transformed",
                     conditions = data.frame(
