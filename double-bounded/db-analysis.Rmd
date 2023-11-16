@@ -28,7 +28,7 @@ figure_path = "./figures/"
 data_path = "./"
 
 # This is used for brms model fitting
-NCORES = 6
+NCORES = 12
 
 sum_coding <- function(x, lvls = levels(x)) {
   # codes the first category with -1
@@ -179,24 +179,6 @@ p_rmse
 ggsave(paste0(figure_path, "unit_rmse.pdf"), width = 210, height = (297/4) * 3, units = "mm", useDingbats = TRUE)
 
 # RMSE showcase
-p_rmse_showcase <- df %>%
-  filter(data_link_transformed == "Logit") %>%
-  ggplot(aes(y = rmse_s, x = data_family_transformed)) +
-  coord_cartesian(xlim = c(0, 0.5)) +
-  scale_x_continuous(labels = c("0", "0.25", "0.5"), breaks = c(0, 0.25, 0.5)) +
-  geom_boxplot() +
-    stat_summary(fun="mean", shape = 4, size = 0.3) +
-  facet_grid(shape ~ data_family_transformed) +
-  xlab(TeX("$RMSE(beta_{xy})$")) +
-  ylab("Fit likelihood") +
-  theme_bw(base_size = 12) +
-  theme(strip.text.x = element_text(size = 10),
-        strip.text.y = element_text(size = 10),
-        axis.ticks.y = element_blank())
-
-p_rmse_showcase
-ggsave(paste0(figure_path,"unit_rmse_showcase.pdf"), width = 210, height = (297/4)*1.3, units = "mm", useDingbats = TRUE)
-
 p_rmse_pointrange <- df %>%
   filter(data_link_transformed == "Logit") %>%
   group_by(data_family_transformed, fit_family_transformed, shape) %>% 
@@ -260,102 +242,6 @@ p_bias_showcase <- df %>%
 p_bias_showcase
 ggsave(paste0(figure_path,"unit_bias_showcase.pdf"), width = 210, height = (297/4)*1.2, units = "mm", useDingbats = TRUE)
 ```
-
-## RMSE Models
-```{r, rmse-model}
-# Remove model where fit link and data link don't match
-df <- result_df %>%
-  filter(fit_link_transformed == data_link_transformed) %>%
-  mutate(
-     fit_link_transformed = factor(fit_link_transformed, levels = 
-                                         c("Logit",
-                                           "Cauchit",
-                                           "Cloglog")),
-   data_link_transformed = factor(data_link_transformed, levels = 
-                                          c("Logit",
-                                            "Cauchit",
-                                            "Cloglog"))
-   )
-
-# Were using a trick here to make the model fit faster. Instead of using a lognormal
-# we use a normal on the logged outcomes, as the code for the normal is highly
-# optimized.m
-m1 = brm(log(rmse_s) ~ 1 +
-         fit_family_transformed + data_family_transformed +
-         fit_family_transformed * data_family_transformed * fit_link_transformed +
-         fit_family_transformed * data_family_transformed +
-         shape + formula +
-         fit_family_transformed * shape,# + fit_family_transformed * fit_link_transformed,
-         data = df, family = gaussian(),
-         chains = 1, cores = 1, threads = NCORES,
-         warmup = 500, iter = 2500,
-         file = paste0(data_path,"rmse_s.RDS"))
-summary(m1) # Diagnostics look good
-
-m2 = brm(log(rmse_s) ~ 1 +
-         fit_family_transformed + data_family_transformed +
-         fit_family_transformed * data_family_transformed * fit_link_transformed +
-         shape + formula +
-         fit_family_transformed * shape * fit_link_transformed,
-         data = df, family = gaussian(),
-         chains = 1, cores = 1, threads = NCORES,
-         warmup = 500, iter = 2500,
-         file = paste0(data_path,"rmse_s_2.RDS"))
-
-m3 = brm(log(rmse_s) ~ 1 +
-         fit_family_transformed + data_family_transformed + shape + formula +
-         fit_family_transformed * data_family_transformed * fit_link_transformed * shape,
-         data = df, family = gaussian(),
-         chains = 1, cores = 1, threads = NCORES,
-         warmup = 500, iter = 2500,
-         file = paste0(data_path,"rmse_s_3.RDS"))
-
-m4 = brm(log(rmse_s) ~ 1 +
-           formula +
-           fit_family_transformed:data_family_transformed:fit_link_transformed:shape,
-         data = df, family = gaussian(),
-         chains = 1, cores = 1, threads = NCORES,
-         warmup = 500, iter = 2500,
-         file = paste0(data_path,"rmse_s_4.RDS"))
-
-#geom pointrange
-
-ce = conditional_effects(m2,
-                              effects = "data_family_transformed:fit_family_transformed",
-                              conditions = data.frame(
-                                cond__ = c("Symmetric", "Asymmetric", "Bathtub"),
-                                shape = c("Symmetric", "Asymmetric", "Bathtub"),
-                                data_family_transformed = NA,
-                                fit_family_transformed = NA,
-                                fit_link_transformed = c("Cloglog"),
-                                formula = NA)
-                              )
-
-
-p1 = plot(ce,
-          plot = FALSE)[[1]]
-p1 +
-  scale_color_scico_d(palette = "batlow", end = 0.8) +
-  coord_flip() +
-  xlab("Data Family") + ylab(TeX("$RMSE(beta_{xy})$")) +
-  theme_bw(base_size = 12) +
-  theme(strip.text.x = element_text(size = 10),
-        strip.text.y = element_text(size = 10),
-        axis.ticks.y = element_blank()) +
-  labs(color = "Fit Family", fill = "Fit Family")
-ggsave(paste0(figure_path,"unit_rmse_s_cond_fam_fam.pdf"), width = 210, height = (297/4), units = "mm", useDingbats = TRUE)
-
-
-
-  conditional_effects(m1, effects = "shape:fit_family_transformed",
-                    conditions = data.frame(
-                      shape = NA,
-                      data_family_transformed = NA,
-                      fit_family_transformed = NA,
-                      formula = NA)
-                    )
-```
-
 
 ## ROC
 
@@ -451,7 +337,7 @@ m1 = brm(auc ~ 1 +
          fit_link_transformed * data_link_transformed +
          fit_family_transformed * data_family_transformed,
          data = df, family = Beta(), cores = NCORES, warmup = 1000, iter = 3500,
-         file = paste0(data_path,"m1.RDS"))
+         file = paste0(data_path,"m_auc.RDS"))
 summary(m1) # Diagnostics look good
 
 p1 = conditional_effects(m1, effects = "data_link_transformed:fit_link_transformed",
@@ -631,7 +517,7 @@ roc_by_shape_and_fit <-  df %>%
   theme_bw(base_size = 12) +
   theme(strip.text.x = element_text(size = 10),
         strip.text.y = element_text(size = 10),
-        legend.position = "bottom") +
+        legend.position = "right") +
   labs(color = "Fit likelihood", shape = "Fit likelihood") +
   xlab("False positive rate") + ylab("True positive rate")
 

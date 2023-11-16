@@ -28,6 +28,9 @@ figure_path = "./figures/"
 # Change this to the directory that contains the full_sim_result.RDS file
 data_path = "./"
 
+# This is used for brms model fitting
+NCORES = 12
+
 sum_coding <- function(x, lvls = levels(x)) {
   # codes the first category with -1
   nlvls <- length(lvls)
@@ -174,25 +177,6 @@ p_rmse
 ggsave(paste0(figure_path, "positive_rmse.pdf"), width = 210, height = (297/4) * 3, units = "mm", useDingbats = TRUE)
 
 # RMSE log showcase
-p_rmse_log_showcase <- df %>%
-  filter(data_link_transformed == "Log") %>%
-  ggplot(aes(y = fit_family_transformed, x = rmse_s)) +
-  coord_cartesian(xlim = c(0, 0.3)) +
-  scale_x_continuous(labels = c("0", "0.15", "0.3"), breaks = c(0, 0.15, 0.3)) +
-  geom_boxplot() +
-  stat_summary(fun="mean", shape = 4, size = 0.3) +
-  facet_grid(shape ~ data_family_transformed) +
-  xlab(TeX("$RMSE(beta_{xy})$")) +
-  ylab("Fit likelihood") +
-  theme_bw(base_size = 12) +
-  theme(strip.text.x = element_text(size = 10),
-        strip.text.y = element_text(size = 10),
-        axis.ticks.y = element_blank())
-
-p_rmse_log_showcase
-ggsave(paste0(figure_path,"positive_rmse_log_showcase.pdf"), width = 210, height = (297/4)*1.6, units = "mm", useDingbats = TRUE)
-
-# RMSE log pointrange showcase
 scales <- list(
   scale_x_continuous(limits = c(0, 0.2), breaks = c(0, 0.1, 0.2), labels = c("0", "0.1", "0.2")),
   scale_x_continuous(limits = c(0, 0.3), breaks = c(0, 0.1, 0.2, 0.3), labels = c("0", "0.1", "0.2", "0.3")),
@@ -374,7 +358,7 @@ m1 = brm(auc ~ 1 +
          shape + formula +
          fit_link_transformed * data_link_transformed +
          fit_family_transformed * data_family_transformed,
-         data = df, family = Beta(), cores = 4, warmup = 1000, iter = 3500,file = paste0(data_path, "m1.RDS"))
+         data = df, family = Beta(), cores = 4, warmup = 1000, iter = 3500,file = paste0(data_path, "m_auc.RDS"))
 summary(m1)
 
 p1 = conditional_effects(m1, effects = "data_link_transformed:fit_link_transformed",

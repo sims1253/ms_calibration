@@ -4,8 +4,6 @@ author: "Maximilian Scholz"
 date: "5/02/2022"
 output:
   bookdown::html_document2: default
-bibliography: choice-of-likelihood-paper.bib
-link-citations: yes
 ---
 
 # Setup
